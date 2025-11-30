@@ -3,13 +3,15 @@ const db = require("../models");
 const { FlightServiceUrl } = require("../config/server-config");
 const { AppError } = require("../utils");
 const { StatusCodes } = require("http-status-codes");
-const {BookingRepository} = require ("../repositories")
+const {BookingRepository} = require ("../repositories");
+const { Enums } = require("../utils/common");
 
+const {BOOKED,CANCELLED} = Enums.bookingStatus
 const bookingRepository= new BookingRepository()
 
 async function createBooking(data) {
 
-    const transaction = db.sequelize.transaction()
+    const transaction = await db.sequelize.transaction()
     try {
         const flight = await axios.get(`${FlightServiceUrl}/${data.flightId}`)
         const flightData = flight.data.data
@@ -21,12 +23,17 @@ async function createBooking(data) {
         const totalCost = flightData.price * data.noOfSeats
 
         const bookingPayload = {... data, totalCost:totalCost}
-        bookingRepository.create(bookingPayload)
+        await bookingRepository.createBooking(bookingPayload,transaction)
+        await axios.patch(`${FlightServiceUrl}/${data.flightId}`,{
+            seat:data.noOfSeats
+        })
 
         await transaction.commit()
         return true
     } catch (error) {
+        console.log("catching service")
         await transaction.rollback()
+        throw error
     }
     
 
@@ -34,7 +41,58 @@ async function createBooking(data) {
 
     
 }
+async function makePayment(data){
+    const transaction = await db.sequelize.transaction();
+    try {
+        const bookingDetails = await bookingRepository.get(data.bookingId,transaction)
+        const bookingTime = new Date(bookingDetails.createdAt);
+        const currentTime = new Date()
 
+        if(bookingDetails.userId != data.userId){
+            throw new AppError('User of requested booking does not match',StatusCodes.BAD_REQUEST)
+        }
+        if(bookingDetails.status === CANCELLED ){
+            cancelBooking(data.bookingId)
+            throw new AppError('Booking time expired',StatusCodes.BAD_REQUEST) 
+        }
+        if(currentTime-bookingTime > 300000){
+            cancelBooking(data.bookingId)
+            throw new AppError('Booking time expired',StatusCodes.BAD_REQUEST)
+        }
+        if(bookingDetails.totalCost != data.totalCost){
+            throw new AppError('Amount of requested booking does not match',StatusCodes.BAD_REQUEST)
+        }
+        
+        //assume payment made
+        const response = await bookingRepository.update(data.bookingId,{status:BOOKED},{transaction:transaction})
+        await transaction.commit()
+        return response;
+    } catch (error) {
+        await transaction.rollback()
+        throw error
+    }
+}
+
+async function cancelBooking(bookingId){
+    const transaction = await db.sequelize.transaction();
+    try {
+        const bookingDetails = await bookingRepository.get(bookingId,transaction)
+        if(bookingDetails.status === CANCELLED ){
+            await transaction.commit()
+            return true
+        }   
+            await axios.patch(`${FlightServiceUrl}/${bookingDetails.flightId}`,{
+            seat:bookingDetails.noOfSeats,
+            dec:0
+        })  
+        await bookingRepository.update(bookingId,{status:CANCELLED},{transaction:transaction})
+        await transaction.commit()
+    } catch (error) {
+        console.log('cancelbookerror',error)
+        await transaction.rollBack()
+        throw error
+    }
+}
 module.exports = {
-    createBooking   
+    createBooking ,makePayment  
 }
