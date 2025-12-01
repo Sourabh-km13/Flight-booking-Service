@@ -2,6 +2,9 @@ const { StatusCodes } = require("http-status-codes")
 const {Booking} = require("../models")
 const { AppError } = require("../utils")
 const CrudRepository = require("./crud-repository")
+const { Op } = require("sequelize")
+const { Enums } = require("../utils/common")
+const {BOOKED,CANCELLED} = Enums.bookingStatus
 
 class BookingRepository extends CrudRepository{
     constructor(){
@@ -33,6 +36,28 @@ class BookingRepository extends CrudRepository{
         if(!response){
             throw new AppError('Not able to update the booking', StatusCodes.NOT_FOUND)
         }
+        return response
+    }
+    async cancelOldBookings(timeStamp){
+        const response = await Booking.update({status:CANCELLED},{
+            where:{
+                [Op.and]:[
+                {
+                    createdAt:{
+                    [Op.lt]:timeStamp
+                    },
+                    status:{
+                        [Op.not]:BOOKED
+                    },
+                    status:{
+                        [Op.not]:CANCELLED
+                    },
+                    
+                }
+            ],
+                
+            }
+        })
         return response
     }
 }
