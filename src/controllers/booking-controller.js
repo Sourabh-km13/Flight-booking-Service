@@ -13,7 +13,7 @@ async function createBooking(req, res){
         successResponse.data = response
         res.status(StatusCodes.CREATED).json(successResponse)
     } catch (error) {
-        console.log("catching controller")
+        console.log("catching controller",error)
         if(error instanceof AppError){
             failResponse.data = error
             res.status(error.statusCode).json({

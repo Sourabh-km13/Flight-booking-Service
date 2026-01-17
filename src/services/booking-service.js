@@ -5,8 +5,9 @@ const { AppError } = require("../utils");
 const { StatusCodes } = require("http-status-codes");
 const {BookingRepository} = require ("../repositories");
 const { Enums } = require("../utils/common");
+const { Queue } = require("../config");
 
-const {BOOKED,CANCELLED} = Enums.bookingStatus
+const {BOOKED,CANCELLED,INITIATED} = Enums.bookingStatus
 const bookingRepository= new BookingRepository()
 
 async function createBooking(data) {
@@ -23,13 +24,14 @@ async function createBooking(data) {
         const totalCost = flightData.price * data.noOfSeats
 
         const bookingPayload = {... data, totalCost:totalCost}
-        await bookingRepository.createBooking(bookingPayload,transaction)
+        const response =await bookingRepository.createBooking(bookingPayload,transaction)
         await axios.patch(`${FlightServiceUrl}/${data.flightId}`,{
-            seat:data.noOfSeats
+            seat:data.noOfSeats,
+            dec:0
         })
 
         await transaction.commit()
-        return true
+        return response
     } catch (error) {
         console.log("catching service")
         await transaction.rollback()
@@ -55,7 +57,7 @@ async function makePayment(data){
             cancelBooking(data.bookingId)
             throw new AppError('Booking time expired',StatusCodes.BAD_REQUEST) 
         }
-        if(currentTime-bookingTime > 300000){
+        if(currentTime-bookingTime > 300000 && bookingDetails.status===INITIATED){
             cancelBooking(data.bookingId)
             throw new AppError('Booking time expired',StatusCodes.BAD_REQUEST)
         }
@@ -65,6 +67,11 @@ async function makePayment(data){
         
         //assume payment made
         const response = await bookingRepository.update(data.bookingId,{status:BOOKED},{transaction:transaction})
+        Queue.sendData({
+            recepientEmail: 'lordgk02@mail.com',
+            subject: 'Flight booked',
+            text: `Booking successfully done for the booking ${data.bookingId}`
+        })
         await transaction.commit()
         return response;
     } catch (error) {
