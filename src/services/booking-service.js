@@ -10,6 +10,21 @@ const { Queue } = require("../config");
 const {BOOKED,CANCELLED,INITIATED} = Enums.bookingStatus
 const bookingRepository= new BookingRepository()
 
+async function addFlightDetails(booking) {
+    try {
+        const flight = await axios.get(`${FlightServiceUrl}/${booking.flightId}`)
+        return {
+            ...booking.toJSON(),
+            flight: flight.data.data
+        }
+    } catch (error) {
+        return {
+            ...booking.toJSON(),
+            flight: null
+        }
+    }
+}
+
 async function createBooking(data) {
 
     const transaction = await db.sequelize.transaction()
@@ -80,6 +95,17 @@ async function makePayment(data){
     }
 }
 
+async function getBooking(bookingId){
+    const booking = await bookingRepository.get(bookingId)
+    return addFlightDetails(booking)
+}
+
+async function getBookingsByUserId(userId, filters = {}){
+    const bookings = await bookingRepository.getByUserId(userId, filters)
+    const bookingsWithFlights = await Promise.all(bookings.map((booking) => addFlightDetails(booking)))
+    return bookingsWithFlights
+}
+
 async function cancelBooking(bookingId){
     const transaction = await db.sequelize.transaction();
     try {
@@ -110,5 +136,5 @@ async function cancelOldBooking(){
     }
 }
 module.exports = {
-    createBooking ,makePayment, cancelOldBooking  
+    createBooking ,makePayment, getBooking, getBookingsByUserId, cancelOldBooking  
 }

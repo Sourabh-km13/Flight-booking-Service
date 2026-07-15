@@ -27,6 +27,19 @@ class BookingRepository extends CrudRepository{
         }
         return response
     }
+    async getByUserId(userId, filters = {}){
+        const where = {userId:userId}
+
+        if(filters.status){
+            where.status = filters.status
+        }
+
+        const response = await this.model.findAll({
+            where,
+            order:[['createdAt','DESC']]
+        })
+        return response
+    }
     async update(id, data, transaction){
         const response = await this.model.update(data,{
             where:{
