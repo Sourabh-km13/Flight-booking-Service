@@ -4,7 +4,7 @@ const { AppError } = require("../utils")
 const CrudRepository = require("./crud-repository")
 const { Op } = require("sequelize")
 const { Enums } = require("../utils/common")
-const {BOOKED,CANCELLED} = Enums.bookingStatus
+const {INITIATED,PENDING} = Enums.bookingStatus
 
 class BookingRepository extends CrudRepository{
     constructor(){
@@ -41,35 +41,33 @@ class BookingRepository extends CrudRepository{
         return response
     }
     async update(id, data, transaction){
-        const response = await this.model.update(data,{
+        const options = {
             where:{
                 id:id
             }
-        }, {transaction:transaction})
-        if(!response){
+        }
+
+        if(transaction){
+            options.transaction = transaction
+        }
+
+        const response = await this.model.update(data,options)
+        if(!response[0]){
             throw new AppError('Not able to update the booking', StatusCodes.NOT_FOUND)
         }
         return response
     }
-    async cancelOldBookings(timeStamp){
-        const response = await Booking.update({status:CANCELLED},{
+    async getExpiredUnpaidBookings(timeStamp){
+        const response = await Booking.findAll({
             where:{
-                [Op.and]:[
-                {
-                    createdAt:{
+                createdAt:{
                     [Op.lt]:timeStamp
-                    },
-                    status:{
-                        [Op.not]:BOOKED
-                    },
-                    status:{
-                        [Op.not]:CANCELLED
-                    },
-                    
+                },
+                status:{
+                    [Op.in]:[INITIATED,PENDING]
                 }
-            ],
-                
-            }
+            },
+            order:[['createdAt','ASC']]
         })
         return response
     }

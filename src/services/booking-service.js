@@ -69,11 +69,10 @@ async function makePayment(data){
             throw new AppError('User of requested booking does not match',StatusCodes.BAD_REQUEST)
         }
         if(bookingDetails.status === CANCELLED ){
-            cancelBooking(data.bookingId)
             throw new AppError('Booking time expired',StatusCodes.BAD_REQUEST) 
         }
         if(currentTime-bookingTime > 300000 && bookingDetails.status===INITIATED){
-            cancelBooking(data.bookingId)
+            await cancelBooking(data.bookingId)
             throw new AppError('Booking time expired',StatusCodes.BAD_REQUEST)
         }
         if(bookingDetails.totalCost != data.totalCost){
@@ -81,7 +80,7 @@ async function makePayment(data){
         }
         
         //assume payment made
-        const response = await bookingRepository.update(data.bookingId,{status:BOOKED},{transaction:transaction})
+        const response = await bookingRepository.update(data.bookingId,{status:BOOKED},transaction)
         Queue.sendData({
             recepientEmail: 'lordgk02@mail.com',
             subject: 'Flight booked',
@@ -114,25 +113,30 @@ async function cancelBooking(bookingId){
             await transaction.commit()
             return true
         }   
-            await axios.patch(`${FlightServiceUrl}/${bookingDetails.flightId}`,{
+        if(bookingDetails.status === BOOKED ){
+            throw new AppError('Booked tickets cannot be cancelled by expiry job',StatusCodes.BAD_REQUEST)
+        }
+        await axios.patch(`${FlightServiceUrl}/${bookingDetails.flightId}`,{
             seat:bookingDetails.noOfSeats,
-            dec:0
+            dec:1
         })  
-        await bookingRepository.update(bookingId,{status:CANCELLED},{transaction:transaction})
+        await bookingRepository.update(bookingId,{status:CANCELLED},transaction)
         await transaction.commit()
+        return true
     } catch (error) {
         console.log('cancelbookerror',error)
-        await transaction.rollBack()
+        await transaction.rollback()
         throw error
     }
 }
 async function cancelOldBooking(){
     try {
         const timeStamp = new Date(Date.now()-1000*300) //5 mins
-        const response = bookingRepository.cancelOldBookings(timeStamp)
+        const expiredBookings = await bookingRepository.getExpiredUnpaidBookings(timeStamp)
+        const response = await Promise.all(expiredBookings.map((booking) => cancelBooking(booking.id)))
         return response
     } catch (error) {
-        
+        throw error
     }
 }
 module.exports = {
