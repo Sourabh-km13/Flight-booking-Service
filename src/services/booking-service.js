@@ -88,6 +88,10 @@ async function makePayment(data){
         if(bookingDetails.userId != data.userId){
             throw new AppError('User of requested booking does not match',StatusCodes.BAD_REQUEST)
         }
+        if(bookingDetails.status === BOOKED){
+            await transaction.commit()
+            return bookingDetails
+        }
         if(bookingDetails.status === CANCELLED ){
             throw new AppError('Booking time expired',StatusCodes.BAD_REQUEST) 
         }
