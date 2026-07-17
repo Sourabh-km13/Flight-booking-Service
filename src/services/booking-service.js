@@ -1,10 +1,8 @@
-const { default: axios } = require("axios");
 const db = require("../models");
-const { FlightServiceUrl } = require("../config/server-config");
 const { AppError } = require("../utils");
 const { StatusCodes } = require("http-status-codes");
 const {BookingRepository} = require ("../repositories");
-const { Enums } = require("../utils/common");
+const { Enums, FlightService } = require("../utils/common");
 const { Queue } = require("../config");
 
 const {BOOKED,CANCELLED,INITIATED} = Enums.bookingStatus
@@ -12,10 +10,10 @@ const bookingRepository= new BookingRepository()
 
 async function addFlightDetails(booking) {
     try {
-        const flight = await axios.get(`${FlightServiceUrl}/${booking.flightId}`)
+        const flight = await FlightService.getFlight(booking.flightId)
         return {
             ...booking.toJSON(),
-            flight: flight.data.data
+            flight
         }
     } catch (error) {
         return {
@@ -29,11 +27,10 @@ async function createBooking(data) {
     let seatsReserved = false
     const transaction = await db.sequelize.transaction()
     try {
-        const flight = await axios.get(`${FlightServiceUrl}/${data.flightId}`)
-        const flightData = flight.data.data
+        const flightData = await FlightService.getFlight(data.flightId)
         const totalCost = flightData.price * data.noOfSeats
 
-        await axios.patch(`${FlightServiceUrl}/${data.flightId}`, {
+        await FlightService.updateSeats(data.flightId, {
             seat: data.noOfSeats,
             dec: 0,
         })
@@ -48,7 +45,7 @@ async function createBooking(data) {
 
         if (seatsReserved) {
             try {
-                await axios.patch(`${FlightServiceUrl}/${data.flightId}`, {
+                await FlightService.updateSeats(data.flightId, {
                     seat: data.noOfSeats,
                     dec: 1,
                 })
@@ -142,9 +139,9 @@ async function cancelBooking(bookingId){
         if(bookingDetails.status === BOOKED ){
             throw new AppError('Booked tickets cannot be cancelled by expiry job',StatusCodes.BAD_REQUEST)
         }
-        await axios.patch(`${FlightServiceUrl}/${bookingDetails.flightId}`,{
-            seat:bookingDetails.noOfSeats,
-            dec:1
+        await FlightService.updateSeats(bookingDetails.flightId, {
+            seat: bookingDetails.noOfSeats,
+            dec: 1
         })  
         await bookingRepository.update(bookingId,{status:CANCELLED},transaction)
         await transaction.commit()
