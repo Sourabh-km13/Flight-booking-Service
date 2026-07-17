@@ -14,7 +14,7 @@ module.exports = {
         database: DB_NAME,
         host: DB_HOST,
         port: DB_PORT,
-        dialect: DB_DIALECT
+        dialect: "mysql"
     },
     test: {
         username: DB_USER,
@@ -22,7 +22,7 @@ module.exports = {
         database: DB_NAME,
         host: DB_HOST,
         port: DB_PORT,
-        dialect: DB_DIALECT
+        dialect: "mysql"
     },
     production: {
         username: DB_USER,
@@ -30,6 +30,6 @@ module.exports = {
         database: DB_NAME,
         host: DB_HOST,
         port: DB_PORT,
-        dialect: DB_DIALECT
+        dialect: "mysql"
     }
 };
