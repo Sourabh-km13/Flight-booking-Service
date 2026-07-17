@@ -26,37 +26,57 @@ async function addFlightDetails(booking) {
 }
 
 async function createBooking(data) {
-
+    let seatsReserved = false
     const transaction = await db.sequelize.transaction()
     try {
         const flight = await axios.get(`${FlightServiceUrl}/${data.flightId}`)
         const flightData = flight.data.data
-        console.log('flightData',flightData)
-        if(data.noOfSeats > flightData.totalSeats){
-            throw new AppError('Required no of seats not available',StatusCodes.INTERNAL_SERVER_ERROR)
-        }
-
         const totalCost = flightData.price * data.noOfSeats
 
-        const bookingPayload = {... data, totalCost:totalCost}
-        const response =await bookingRepository.createBooking(bookingPayload,transaction)
-        await axios.patch(`${FlightServiceUrl}/${data.flightId}`,{
-            seat:data.noOfSeats,
-            dec:0
+        await axios.patch(`${FlightServiceUrl}/${data.flightId}`, {
+            seat: data.noOfSeats,
+            dec: 0,
         })
+        seatsReserved = true
 
+        const bookingPayload = { ...data, totalCost }
+        const response = await bookingRepository.createBooking(bookingPayload, transaction)
         await transaction.commit()
         return response
     } catch (error) {
-        console.log("catching service")
         await transaction.rollback()
+
+        if (seatsReserved) {
+            try {
+                await axios.patch(`${FlightServiceUrl}/${data.flightId}`, {
+                    seat: data.noOfSeats,
+                    dec: 1,
+                })
+            } catch (restoreError) {
+                console.log('Failed to restore seats after booking create failure', restoreError)
+            }
+        }
+
+        if (error instanceof AppError) {
+            throw error
+        }
+
+        const status = error.response?.status
+        const message =
+            error.response?.data?.failResponse?.data?.explanation ||
+            error.response?.data?.failResponse?.data?.message ||
+            error.response?.data?.message ||
+            error.message
+
+        if (status === StatusCodes.BAD_REQUEST || status === StatusCodes.CONFLICT) {
+            throw new AppError(message || 'Required no of seats not available', StatusCodes.BAD_REQUEST)
+        }
+        if (status === StatusCodes.NOT_FOUND) {
+            throw new AppError(message || 'Flight not found', StatusCodes.NOT_FOUND)
+        }
+
         throw error
     }
-    
-
-
-
-    
 }
 async function makePayment(data){
     const transaction = await db.sequelize.transaction();
