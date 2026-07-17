@@ -35,7 +35,8 @@ async function makePayment(req, res){
         const response = await bookingService.makePayment({
             totalCost:req.body.totalCost,
             userId:req.body.userId,
-            bookingId: req.body.bookingId
+            bookingId: req.body.bookingId,
+            userEmail: req.body.userEmail
         })
         successResponse.data = response
         res.status(StatusCodes.CREATED).json(successResponse)

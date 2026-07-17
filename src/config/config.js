@@ -3,6 +3,7 @@ const {
     DB_PASS,
     DB_NAME,
     DB_HOST,
+    DB_PORT,
     DB_DIALECT
 } = require('./server-config');
 
@@ -12,6 +13,7 @@ module.exports = {
         password: DB_PASS,
         database: DB_NAME,
         host: DB_HOST,
+        port: DB_PORT,
         dialect: DB_DIALECT
     },
     test: {
@@ -19,6 +21,7 @@ module.exports = {
         password: DB_PASS,
         database: DB_NAME,
         host: DB_HOST,
+        port: DB_PORT,
         dialect: DB_DIALECT
     },
     production: {
@@ -26,6 +29,7 @@ module.exports = {
         password: DB_PASS,
         database: DB_NAME,
         host: DB_HOST,
+        port: DB_PORT,
         dialect: DB_DIALECT
     }
 };

@@ -105,11 +105,13 @@ async function makePayment(data){
         
         //assume payment made
         const response = await bookingRepository.update(data.bookingId,{status:BOOKED},transaction)
-        Queue.sendData({
-            recepientEmail: 'lordgk02@mail.com',
-            subject: 'Flight booked',
-            text: `Booking successfully done for the booking ${data.bookingId}`
-        })
+        if (data.userEmail) {
+            Queue.sendData({
+                recepientEmail: data.userEmail,
+                subject: 'Flight booked',
+                text: `Booking successfully done for the booking ${data.bookingId}`
+            })
+        }
         await transaction.commit()
         return response;
     } catch (error) {

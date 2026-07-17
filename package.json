@@ -4,6 +4,7 @@
   "description": "Booking lifecycle, payment hold, and notifications for FlySmart",
   "main": "index.js",
   "scripts": {
+    "start": "node src/index.js",
     "dev": "npx nodemon src/index.js"
   },
   "author": "sourabh",

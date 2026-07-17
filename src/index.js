@@ -6,6 +6,14 @@ const Crons = require('./utils/common/cron-job');
 
 const app = express();
 app.use(express.json());
+
+app.get('/health', (req, res) => {
+    res.status(200).json({
+        success: true,
+        message: 'Booking Service is healthy'
+    });
+});
+
 app.use('/api', apiRoutes);
 
 app.listen(ServerConfig.PORT, () => {
