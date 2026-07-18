@@ -4,6 +4,22 @@ The Booking Service manages the **ticket booking lifecycle** for FlySmart. It cr
 
 Following the database-per-service pattern, it maintains its own MySQL database and does not store user identities or flight catalog data. User authentication is delegated to the API Gateway, while seat inventory is managed by the Flight Service. The Booking Service coordinates with these services through synchronous HTTP APIs and asynchronous RabbitMQ messaging to ensure reliable booking and notification workflows.
 
+![Node.js](https://img.shields.io/badge/Node.js-Express-339933?logo=node.js&logoColor=white)
+![MySQL](https://img.shields.io/badge/MySQL-Sequelize-4479A1?logo=mysql&logoColor=white)
+![RabbitMQ](https://img.shields.io/badge/RabbitMQ-amqplib-FF6600?logo=rabbitmq&logoColor=white)
+![node-cron](https://img.shields.io/badge/Jobs-node--cron-35495E)
+![Axios](https://img.shields.io/badge/HTTP-Axios-5A29E4?logo=axios&logoColor=white)
+
+> **Part of the FlySmart platform** · [Overview](../README.md) · [Live demo](https://flight-frontend-eight.vercel.app/) · [Frontend](../Flight-Frontend) · [API Gateway](../Api_Gateway_Flight) · [Flight Service](../Flight-Service)
+
+### Skills demonstrated
+
+- **Cross-service transactions** — a seat-hold saga that reserves inventory in the Flight Service and compensates (restores seats) on failure or expiry.
+- **Asynchronous messaging** — decoupling ticket email from the payment request via a RabbitMQ queue.
+- **Scheduled jobs** — a `node-cron` sweeper that reconciles abandoned holds every minute.
+- **Data ownership** — an isolated MySQL schema with logical (not SQL) references to other services.
+- **Resilient HTTP integration** — a dedicated Flight Service client with graceful enrichment fallbacks.
+
 ---
 
 ## Architecture
@@ -81,7 +97,7 @@ The frontend mirrors the same five-minute window with a payment countdown.
 |---------|--------|
 | HTTP API | Node.js, Express |
 | Persistence | Sequelize + MySQL |
-| Flight coordination | Axios |
+| Flight coordination | Axios instance in `src/utils/common/flight-service.js` |
 | Background expiry | `node-cron` (every minute) |
 | Async ticket mail | `amqplib` → RabbitMQ `noti-queue` |
 | Logging | Winston |
@@ -98,9 +114,10 @@ Service routes live under `/api/v1`. Through the gateway, callers use:
 
 | Method | Path | Body / params | What it does |
 |--------|------|---------------|--------------|
-| GET | `/info` | — | Health/info |
+| GET | `/health` | — | Unauthenticated liveness check (`GET /health`, outside `/api/v1`) |
+| GET | `/api/v1/info` | — | Info endpoint |
 | POST | `/booking` | `{ flightId, userId, noOfSeats }` | Create hold + reserve seats |
-| POST | `/booking/payment` | `{ bookingId, userId, totalCost }` | Confirm booking + enqueue ticket mail |
+| POST | `/booking/payment` | `{ bookingId, userId, totalCost, userEmail? }` | Confirm booking + enqueue ticket mail |
 | GET | `/booking/user/:userId` | query `?status=` optional | List user bookings (+ flight details) |
 | GET | `/booking/:id` | — | Single booking (+ flight details) |
 
@@ -132,11 +149,12 @@ Content-Type: application/json
 {
   "bookingId": 45,
   "userId": 3,
-  "totalCost": 8000
+  "totalCost": 8000,
+  "userEmail": "traveler@example.com"
 }
 ```
 
-On success the booking becomes `booked` and a mail message is published to RabbitMQ. Read APIs return the booking plus an embedded `flight` object from Flight Service (or `flight: null` if that fetch fails).
+On success the booking becomes `booked` and, when `userEmail` is provided, a mail message is published to RabbitMQ. Read APIs return the booking plus an embedded `flight` object from Flight Service (or `flight: null` if that fetch fails).
 
 ---
 
@@ -177,17 +195,17 @@ Statuses (ENUM): `initiated` · `pending` · `booked` · `cancelled`
 
 ## Inventory coordination with Flight Service
 
-Configured by `FLIGHT_SERVICE_URL`, expected to point at the flight resource base, for example:
+All Flight Service calls go through a single Axios instance in [`src/utils/common/flight-service.js`](src/utils/common/flight-service.js), configured with `baseURL: FLIGHT_SERVICE_URL`. `FLIGHT_SERVICE_URL` is the Flight Service **base URL** (no path); the resource path (`/api/v1/flight/...`) is appended by the client helper.
 
 ```bash
-FLIGHT_SERVICE_URL=http://localhost:<flight-port>/api/v1/flight
+FLIGHT_SERVICE_URL=http://localhost:<flight-port>
 ```
 
-| Action | HTTP call | Purpose |
-|--------|-----------|---------|
-| Read flight | `GET ${FLIGHT_SERVICE_URL}/:flightId` | Price, seats, enrichment |
-| Reserve seats | `PATCH ${FLIGHT_SERVICE_URL}/:flightId` | Hold inventory on create |
-| Restore seats | `PATCH ${FLIGHT_SERVICE_URL}/:flightId` | Release inventory on cancel |
+| Action | Client call | HTTP | Purpose |
+|--------|-------------|------|---------|
+| Read flight | `FlightService.getFlight(id)` | `GET /api/v1/flight/:id` | Price, seats, enrichment |
+| Reserve seats | `FlightService.updateSeats(id, { seat, dec: 0 })` | `PATCH /api/v1/flight/:id` | Hold inventory on create |
+| Restore seats | `FlightService.updateSeats(id, { seat, dec: 1 })` | `PATCH /api/v1/flight/:id` | Release inventory on cancel |
 
 Seat patch body:
 
@@ -206,27 +224,27 @@ Flight Service applies these updates under its own locking (`SELECT … FOR UPDA
 
 ## Asynchronous ticket email (RabbitMQ)
 
-Booking confirmation mail is **not** sent inside the payment request. After status flips to `booked`, the service publishes a JSON message to RabbitMQ so a separate notification consumer can send email asynchronously.
+Booking confirmation mail is **not** sent inside the payment request. After status flips to `booked`, and only when the request included a `userEmail`, the service publishes a JSON message to RabbitMQ so a separate notification consumer can send email asynchronously.
 
 | Detail | Value |
 |--------|--------|
 | Library | `amqplib` |
-| Broker | `amqp://localhost` (hardcoded in queue config) |
+| Broker | `RABBITMQ_URL` env (e.g. `amqp://localhost` or a hosted broker) |
 | Queue | `noti-queue` |
-| When | Successful `makePayment`, after status → `booked` |
+| When | Successful `makePayment` with a `userEmail`, after status → `booked` |
 | Why | Keep payment fast; isolate SMTP/provider failures from booking confirmation |
 
 Published payload shape:
 
 ```json
 {
-  "recepientEmail": "lordgk02@mail.com",
+  "recepientEmail": "traveler@example.com",
   "subject": "Flight booked",
   "text": "Booking successfully done for the booking <bookingId>"
 }
 ```
 
-Today the recipient address is **hardcoded** in the payment path (field name is spelled `recepientEmail` in code). A notification worker consuming `noti-queue` is expected to send the actual email.
+The recipient address comes from the `userEmail` on the payment request (the queue field is spelled `recepientEmail` in code). Publishing is skipped gracefully if no `userEmail` is provided or the RabbitMQ channel is not ready, so payment never fails because the broker is down. A notification worker consuming `noti-queue` is expected to send the actual email.
 
 Why this design works well:
 
@@ -292,29 +310,35 @@ Flight details are attached at read time via HTTP (`addFlightDetails`), not via 
 
 ### Environment
 
-`.env`:
+All configuration is env-driven via `.env` (loaded by `dotenv`). Sequelize reads the same values through `src/config/config.js` (no committed `config.json`).
 
 ```bash
 PORT=4000
-FLIGHT_SERVICE_URL=http://localhost:<flight-port>/api/v1/flight
+FLIGHT_SERVICE_URL=http://localhost:3000       # Flight Service base URL (no path)
+RABBITMQ_URL=amqp://localhost                  # or a hosted broker
+DB_USER=root
+DB_PASS=
+DB_NAME=Bookings
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DIALECT=mysql
 ```
 
-### Sequelize config
-
-Create `src/config/config.json` (gitignored) with MySQL credentials for `development` / `production`, same pattern as the other services.
+See [`.env.example`](.env.example) for the full template.
 
 ### Prerequisites
 
-- MySQL running and database created
+- MySQL running and the `Bookings` database created
 - Flight Service reachable at `FLIGHT_SERVICE_URL`
-- RabbitMQ running locally if you want async booked-ticket emails (`amqp://localhost`)
+- A RabbitMQ broker at `RABBITMQ_URL` if you want async booked-ticket emails (optional; publishing is skipped gracefully when unavailable)
 
 ### Commands
 
 ```bash
 npm install
 npx sequelize-cli db:migrate
-npm run dev
+npm run dev      # nodemon (local)
+npm start        # node src/index.js (production)
 ```
 
 Point the gateway `BOOKING_SERVICE` env var at this service’s base URL (for example `http://localhost:4000`).
@@ -325,10 +349,11 @@ Point the gateway `BOOKING_SERVICE` env var at this service’s base URL (for ex
 
 ```text
 src/
-  index.js                 # Express boot → ConnectQueue → cron
+  index.js                 # Express boot → /health → ConnectQueue → cron
   config/
-    server-config.js       # PORT, FLIGHT_SERVICE_URL
-    queue-config.js        # RabbitMQ connect + sendData
+    server-config.js       # PORT, FLIGHT_SERVICE_URL, RABBITMQ_URL, DB_*
+    config.js              # Sequelize config sourced from env (no config.json)
+    queue-config.js        # RabbitMQ connect + guarded sendData
     logger-config.js       # Winston
   routes/v1/
     booking-routes.js      # booking + payment + reads
@@ -339,8 +364,10 @@ src/
   models/booking.js
   migrations/              # Bookings table
   utils/common/
+    flight-service.js      # Axios instance → Flight Service (getFlight, updateSeats)
     cron-job.js            # every-minute expiry sweeper
     enums.js               # booking statuses
+.sequelizerc               # points sequelize-cli at src/config/config.js
 ```
 
 ---
@@ -349,6 +376,7 @@ src/
 
 | Repo | Role |
 |------|------|
+| [FlySmart overview](../README.md) | Platform overview + live demo |
 | [Api_Gateway_Flight](../Api_Gateway_Flight) | Auth + reverse proxy to `/bookingservice` |
 | [Flight-Service](../Flight-Service) | Flight catalog and locked seat inventory |
 | [Flight-Frontend](../Flight-Frontend) | Booking UI and five-minute payment timer |
@@ -357,4 +385,4 @@ src/
 
 ## License
 
-Private / educational project.
+Released under the MIT License.
